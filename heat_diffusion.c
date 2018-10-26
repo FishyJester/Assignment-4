@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 #include <CL/cl.h>	//is in /usr/include as probably expected
 			//libOpenCL.so is in /usr/lib64, does this need special handling?
-#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 
 
 int main(int argc, char *argv[]){
@@ -51,7 +51,7 @@ int main(int argc, char *argv[]){
 
 	
 
-	unsigned int n;	//number of iterations to run
+	unsigned int iter;	//number of iterations to run
 	unsigned int width, height;	//dimensions of work area
 	float central;	//central value at start
 	float c;	//diffusion constant
@@ -60,11 +60,20 @@ int main(int argc, char *argv[]){
 	//first two are width, height in that order
 	//-i gives central
 	//-d gives c
-	//-n gives n
-	central = 1000000;
-	c = 0.3;
-	width = 5;
-	height = 6;
+	//-n gives iter
+		
+	width = atol(argv[1]);
+	height = atol(argv[2]);
+	central = atof(&argv[3][2]);
+	c = atof(&argv[4][2]);
+	iter = atol(&argv[5][2]);
+//	printf("Width %d\nHeight %d\nCentral %f\nConstant %f\nIterations %d\n", width, height, central, c, iter);
+
+//	central = 1e10;
+//	c = 0.02;
+//	width = 10000;
+//	height = 10000;
+//	iter = 1000;
 
 	
 	//Building OpenCL program
@@ -103,20 +112,25 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 
-	cl_kernel kernel;
-	kernel = clCreateKernel ( program, "run_heat_diff", &error );
+	cl_kernel kernel_0, kernel_1;
+	kernel_0 = clCreateKernel ( program, "run_heat_diff_0", &error );
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot create kernel\n" );
+		fprintf ( stderr, "Cannot create kernel 0\n" );
+		return 1;
+	}
+	kernel_1 = clCreateKernel ( program, "run_heat_diff_1", &error );
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot create kernel 1\n" );
 		return 1;
 	}
 	
 	
-	cl_mem heatmap_buffer_in = clCreateBuffer ( context, CL_MEM_READ_ONLY, sizeof(float) * width*height, NULL, &error );
+	cl_mem heatmap_buffer_0 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * (width+2)*(height+2), NULL, &error );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot create input buffer\n" );
 		return 1;
 	}
-	cl_mem heatmap_buffer_out = clCreateBuffer ( context, CL_MEM_WRITE_ONLY, sizeof(float) * width*height, NULL, &error );
+	cl_mem heatmap_buffer_1 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * (width+2)*(height+2), NULL, &error );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot create output buffer\n" );
 		return 1;
@@ -150,7 +164,7 @@ int main(int argc, char *argv[]){
 	//error = clEnqueueWriteBuffer ( command_queue, input_buffer_a, CL_TRUE, 0, ix_m*sizeof(float), a, 0, NULL, NULL);
 	//input_buffer_a = clCreateBuffer ( context, CL_MEM_READ_ONLY, sizeof(float) * ix_m, NULL, &error);
 	
-	error = clEnqueueWriteBuffer ( command_queue, heatmap_buffer_in, CL_TRUE, 0, sizeof(float) * width*height, heatmap, 0, NULL, NULL );
+	error = clEnqueueWriteBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, sizeof(float) * (width+2)*(height+2), heatmap, 0, NULL, NULL );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot enqueue write buffer\n" );
 		return 1;
@@ -170,30 +184,55 @@ int main(int argc, char *argv[]){
 		fprintf ( stderr, "Cannot enqueue write buffer\n" );
 		return 1;
 	}
+	error = clSetKernelArg ( kernel_0, 0, sizeof(cl_mem), &heatmap_buffer_0 );	//TODO: Error handling?
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot set args\n" );
+		return 1;
+	}
+	error = clSetKernelArg ( kernel_0, 1, sizeof(cl_mem), &heatmap_buffer_1 );
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot set args\n" );
+		return 1;
+	}
+	error = clSetKernelArg ( kernel_0, 2, sizeof(cl_mem), &c_buffer);
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot set args\n" );
+		return 1;
+	}
+	error = clSetKernelArg ( kernel_0, 3, sizeof(cl_mem), &height_buffer);
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot set args\n" );
+		return 1;
+	}
+	error = clSetKernelArg ( kernel_0, 4, sizeof(cl_mem), &width_buffer);
+	if ( error != CL_SUCCESS ) {
+		fprintf ( stderr, "Cannot set args\n" );
+		return 1;
+	}
 
-	error = clSetKernelArg ( kernel, 0, sizeof(cl_mem), &heatmap_buffer_in );	//TODO: Error handling?
+	error = clSetKernelArg ( kernel_1, 0, sizeof(cl_mem), &heatmap_buffer_0 );	//TODO: Error handling?
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set input args\n" );
+		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
 	}
-	error = clSetKernelArg ( kernel, 1, sizeof(cl_mem), &heatmap_buffer_out);
+	error = clSetKernelArg ( kernel_1, 1, sizeof(cl_mem), &heatmap_buffer_1 );
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set output args\n" );
+		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
 	}
-	error = clSetKernelArg ( kernel, 2, sizeof(cl_mem), &c_buffer);
+	error = clSetKernelArg ( kernel_1, 2, sizeof(cl_mem), &c_buffer);
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set output args\n" );
+		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
 	}
-	error = clSetKernelArg ( kernel, 3, sizeof(cl_mem), &height_buffer);
+	error = clSetKernelArg ( kernel_1, 3, sizeof(cl_mem), &height_buffer);
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set output args\n" );
+		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
 	}
-	error = clSetKernelArg ( kernel, 4, sizeof(cl_mem), &width_buffer);
+	error = clSetKernelArg ( kernel_1, 4, sizeof(cl_mem), &width_buffer);
 	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set output args\n" );
+		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
 	}
 
@@ -201,13 +240,21 @@ int main(int argc, char *argv[]){
 	const size_t work_size[2] = {height, width};
 
 //ACTUALLY RUN THE PROGRAM!!!!
-
-	clEnqueueNDRangeKernel ( command_queue, kernel, 2, offset, work_size, NULL, 0, NULL, NULL);
-
+	for ( size_t ix=0; ix < iter-1; ix += 2 ) {	
+		clEnqueueNDRangeKernel ( command_queue, kernel_0, 2, offset, work_size, NULL, 0, NULL, NULL );
+		clEnqueueNDRangeKernel ( command_queue, kernel_1, 2, offset, work_size, NULL, 0, NULL, NULL );
+//		clFlush ( command_queue );
+//		clFinish ( command_queue );
+	}
+	float * heatmap_out = malloc ( (width+2)*(height+2)*sizeof(float) );
+	if ( iter % 2 == 1 ) {
+		clEnqueueNDRangeKernel ( command_queue, kernel_0, 2, offset, work_size, NULL, 0, NULL, NULL );
+		clEnqueueReadBuffer ( command_queue, heatmap_buffer_1, CL_TRUE, 0, (width+2)*(height+2)*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
+	} else {
+		clEnqueueReadBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, (width+2)*(height+2)*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
+	}
 //Done
 
-	float * heatmap_out = malloc ( width*height*sizeof(float) );
-	clEnqueueReadBuffer ( command_queue, heatmap_buffer_out, CL_TRUE, 0, width*height*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
 
 	clFlush ( command_queue );
 	clFinish ( command_queue );//TODO: Error handling
@@ -217,22 +264,36 @@ int main(int argc, char *argv[]){
 	}
 
 
-	clReleaseKernel(kernel); //later
+	clReleaseKernel(kernel_0);
+	clReleaseKernel(kernel_1);
 	clReleaseProgram(program);
 
-	clReleaseMemObject ( heatmap_buffer_in );
-	clReleaseMemObject ( heatmap_buffer_out );
+	clReleaseMemObject ( heatmap_buffer_0 );
+	clReleaseMemObject ( heatmap_buffer_1 );
 	clReleaseMemObject ( c_buffer );
 	clReleaseMemObject ( height_buffer );
 	clReleaseMemObject ( width_buffer );
 	clReleaseCommandQueue ( command_queue );
 	clReleaseContext(context);
 
-	for ( size_t ix=0; ix < height; ++ix ) {
-		for ( size_t jx=0; jx < width; ++jx )
-			printf("%8f ", heatmap_out[ix+height*jx]);
-		printf("\n");
-	}
+	float total_heat = 0;
+	float abs_diff_m = 0;
+	for ( size_t ix=1; ix < height+1; ++ix )
+		for ( size_t jx=1; jx < width+1; ++jx )
+			total_heat += heatmap_out[ix+height*jx];
+	float temp_mean = total_heat / (height*width);
+	for ( size_t ix=1; ix < height+1; ++ix )
+		for ( size_t jx=1; jx < width+1; ++jx ) {
+			float diff = heatmap_out[ix+height*jx] - temp_mean;
+			if ( diff > 0 )
+				abs_diff_m += diff;
+			else
+				abs_diff_m -= diff;
+		}
+	abs_diff_m /= (width*height);
+	printf("Total temp: %.3e\n", total_heat);
+	printf("Average temp: %.3e\nAverage abs diff: %.3e\n", temp_mean, abs_diff_m);	
+
 
 	free (heatmap);
 	free (heatmap_out);
