@@ -1,0 +1,128 @@
+<h1 id="heat-diffusion-hpcgroup058">Heat Diffusion, hpcgroup058</h1>
+<p>This report will describe our implementation of the heat diffusion problem with openCL parallelization. We will describe in broad terms how our code works and our thoughts behind doing what we do. Only critical blocks of code will be discussed and as such we will not discuss the more standard overhead of openCL, such as <code>clGetPlatformIDs</code>, unless we’ve specifically modified it from it’s standard form.</p>
+
+<h2 id="program-description">Program description</h2>
+<p>Note that our program contains a lot of error handling that will be left out in the following description! References to errors in code segments that appear are realted to this and is the standard openCL error checking with nothing special added by our device.</p>
+
+<p>We start by standard openCL overhead: finding platform, device and create a context and a command queue. This is followed by parsing of command line arguments. Here we include padding in our weight and height argument and combine them into a total size:</p>
+
+<pre><code class="language-c">unsigned int width, height;
+
+width = atol(argv[1])+2;
+height = atol(argv[2])+2;
+unsigned int size = width*height; 
+</code></pre>
+
+<p>We’ve made the assumption that arguments are given in correct order in command line.</p>
+
+<p>Continuing we build our openCL program, put in file <code>run_heat_diff.cl</code>. We use <code>fseek</code> to seek to end of file and <code>ftell</code> to return file size. Then we read the file to buffer and create program:</p>
+
+<pre><code class="language-c">run_heat_diff_src = (char*) malloc(0x100000);
+cl_program program;
+program = clCreateProgramWithSource(context, 1, (const char **) &amp;run_heat_diff_src, NULL, &amp;error);
+clBuildProgram (program, 0, NULL, NULL, NULL, NULL);
+</code></pre>
+
+<p>The use of the hex in malloc allows us to allocate for maximum file size.</p>
+
+<p>Next we create our kernels. We use two kernels that will run essentially the same code, but write to and read from two different heatmap buffers, <code>heatmap_buffer_0</code> and <code>heatmap_buffer_1</code>. This will allow us to run the iterations efficiently by writing initial data into one buffer, do the diffusion calculations and store them in the other buffer, which is then used to do the next iteration of calculations and store it into the first buffer, and so on. We also create buffers for the height, width and diffusion constant to be used in the diffusion calculations:</p>
+
+<pre><code class="language-c">cl_kernel kernel_0, kernel_1;
+kernel_0 = clCreateKernel (program, "run_heat_diff_0", &amp;error);
+kernel_1 = clCreateKernel (program, "run_heat_diff_1", &amp;error);
+
+cl_mem heatmap_buffer_0 = clCreateBuffer (context, CL_MEM_READ_WRITE, sizeof(float) * size, NULL, &amp;error);
+cl_mem heatmap_buffer_1 = clCreateBuffer (context, CL_MEM_READ_WRITE, sizeof(float) * size, NULL, &amp;error);
+
+// Create buffers for diffusion constant c, height and weight
+</code></pre>
+
+<p><code>run_heat_diff_1</code> and <code>run_heat_diff_0</code> are defined inside <code>run_heat_diff.cl</code> which we will look at later.</p>
+
+<p>After creating the buffers we initialize the heatmap to be written to <code>heatmap_buffer_0</code>. Here <code>central</code> is the central start temperature parsed from command line:</p>
+
+<pre><code class="language-c">float * heatmap = calloc(size, sizeof(float));
+heatmap[(width/2) * height + height/2] += central/4;
+heatmap[(width-1)/2 * height + height/2] += central/4;
+heatmap[(width/2) * height + (height-1)/2] += central/4;
+heatmap[(width-1)/2 * height + (height-1)/2] += central/4;
+</code></pre>
+
+<p>Initializing in this way allow us to spread out the value amongst the centerpoints in the case of even widths and heights. Notice also that we traverse down columns and not along rows if thinking matrix-wise. As we are only working with a single array this has no impact on row major order however.</p>
+
+<p>Next we enqueue the write buffers, writing the above initialized heatmap to <code>heatmap_buffer_0</code> which will start the iteration. We also enqueue the height, width and diffusion constant buffers. We continue by setting kernel arguments, giving both <code>kernel_0</code> and <code>kernel_1</code> access to both heatmap buffers and weight, height and diffusion constant.</p>
+
+<p>Next we actually run the program, <code>iter</code> is the number of iterations, parsed from the command line:</p>
+
+<pre><code class="language-c">const size_t offset[2] = {1,1};
+const size_t work_size[2] = {height-2, width-2};
+
+for (size_t ix = 0; ix &lt; iter-1; ix += 2){
+	clEnqueueNDRangeKernel(command_queue, kernel_0, 2, offset, work_size, NULL, 0, NULL, NULL);
+	clEnqueueNDRangeKernel(command_queue, kernel_1, 2, offset, work_size, NULL, 0, NULL, NULL);
+}
+float *heatmap_out = malloc(size * sizeof(float));
+if(iter % 2 == 1){
+	clEnqueueNDRangeKernel(command_queue, kernel_0, 2, offset, work_size, NULL, 0, NULL, NULL);
+	clEnqueueReadBuffer(command_queue, heatmap_buffer_1, CL_TRUE, 0, size * sizeof(float), heatmap_out, 0, NULL, NULL);
+} else {
+	clEnqueueReadBuffer(command_queue, heatmap_buffer_0, CL_TRUE, 0, size * sizeof(float), heatmap_out, 0, NULL, NULL);
+}
+</code></pre>
+
+<p>As seen we set offset to pad the borders and work size to give the amount of coordinates that needs to be treated, adjusted for our initial padding of weight and height. As described earlier kernel 0 will use data stored in heatmap 0 and store the resulting calculations in heatmap 1 which will then repeat the same procedure in the opposite direction. If we have an even number of iterations the for loop will stop one iteration short, having stored data in heatmap 0. If this is the case we perform the last iteration (which will then be conducted by kernel 0, storing data in heatmap 1) and write data from heatmap 1 to heatmap_out. Otherwise all iterations are accounted for inside the loop, finishing with kernel 1 (storing data in heatmap 0). So we read buffer from heatmap 0 to heatmap_out.</p>
+
+<p>Now we’ll take a closer look at <code>run_heat_diff.cl</code> where <code>run_heat_diff_0</code> and <code>run_heat_diff_1</code> are defined. As both of these are essentially the same except for which heatmap is read from and which is written to, we will present the code for <code>run_heat_diff_0</code>, to get <code>run_heat_diff_1</code> it’s enough to swap the index <code>i</code> in <code>heatmap_i</code>:</p>
+
+<pre><code class="language-c">__kernel void
+run_heat_diff_0(
+	__global float * heatmap_0,
+	__global float * heatmap_1,
+	__global float * c, //Diffusion constant
+	__global int * height,
+	__global int * width
+	)
+{
+	int ix = get_global_id(0);
+	int jx = get_global_id(1);
+	int kx = ix +*height * jx;
+	heatmap_1[kx] = heatmap_0[kx] +
+			*c * ((heatmap_0[kx - 1] +
+				heatmap_0[kx + 1] +
+				heatmap_0[kx - *height] +
+				heatmap_0[kx + *height])
+				/4
+				-heatmap_0[kx]
+				);
+}
+</code></pre>
+
+<p>The calculations are straight forward. Notice again that we consider it as down columns when thinking matrix-wise, <code>get_global_id(0)</code> being height-wise index and <code>get_global_id(1)</code> being width-wise.</p>
+
+<p>When calculations are done and data has been written to <code>heatmap_out</code> we release kernels, program, buffers, queue and context. Then we loop through the <code>heatmap_out</code> buffer and calculate mean heat and the mean absolute difference between the individual points’ heat and the mean heat:</p>
+
+<pre><code class="language-c">float total_heat = 0;
+float abs_diff_m = 0;
+
+for(size_t ix = 1; ix &lt; height-1; ++ix){
+	for(size_t jx = 1; jx &lt; width-1; ++jx)
+		total_heat += heatmap_out[ix+height*jx];
+
+}
+float temp_mean = total_heat/((height-2)*(width-2));
+
+for(size_t ix = 1; ix &lt; height-1; ++ix)
+	for(size_t jx = 1; jx &lt; width-1; ++jx){
+		float diff = heatmap_out[ix+height*jx] - temp_mean;
+	
+		if(diff &gt; 0)
+			abs_diff_m += diff;
+		else
+			abs_diff_m -= diff;
+}
+
+abs_diff_m /= (width-2)*(height-2);
+</code></pre>
+
+<p>We use the if statement to avoid having to include <code>math.h</code> to use <code>abs</code>. It is possible this will also add performance over using <code>abs</code>, although any performance hit from using one over the other in this block of code should be negligible.</p>
+
