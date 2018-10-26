@@ -1,6 +1,6 @@
 __kernel void
 run_heat_diff_0(
-	      __global float * heatmap_0,	//float or double, * or **?
+	      __global float * heatmap_0,	//float or float, * or **?
 	      __global float * heatmap_1,
 	      __global float * c,
 	      __global int * height,
@@ -22,7 +22,7 @@ run_heat_diff_0(
 
 __kernel void
 run_heat_diff_1(
-	      __global float * heatmap_0,	//float or double, * or **?
+	      __global float * heatmap_0,	//float or float, * or **?
 	      __global float * heatmap_1,
 	      __global float * c,
 	      __global int * height,
