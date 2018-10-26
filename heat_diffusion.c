@@ -62,8 +62,9 @@ int main(int argc, char *argv[]){
 	//-d gives c
 	//-n gives iter
 		
-	width = atol(argv[1]);
-	height = atol(argv[2]);
+	width = atol(argv[1])+2;
+	height = atol(argv[2])+2;
+	unsigned int size = width*height;
 	central = atof(&argv[3][2]);
 	c = atof(&argv[4][2]);
 	iter = atol(&argv[5][2]);
@@ -125,12 +126,12 @@ int main(int argc, char *argv[]){
 	}
 	
 	
-	cl_mem heatmap_buffer_0 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * (width+2)*(height+2), NULL, &error );
+	cl_mem heatmap_buffer_0 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * size, NULL, &error );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot create input buffer\n" );
 		return 1;
 	}
-	cl_mem heatmap_buffer_1 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * (width+2)*(height+2), NULL, &error );
+	cl_mem heatmap_buffer_1 = clCreateBuffer ( context, CL_MEM_READ_WRITE, sizeof(float) * size, NULL, &error );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot create output buffer\n" );
 		return 1;
@@ -153,18 +154,18 @@ int main(int argc, char *argv[]){
 	
 
 	// Initialize
-	float * heatmap = (float*)calloc ((width+2)*(height+2), sizeof(float)); //[width+2][height+2] for padding with zeroes? [width*height] for 1-dimensional? malloc?
-	heatmap[(width/2+1)    *height + height/2+1]     += central/4;	//does this work? Is it the right way to do it?
-	heatmap[((width-1)/2+1)*height + height/2+1]     += central/4;
-	heatmap[(width/2+1)    *height + (height-1)/2+1] += central/4;
-	heatmap[((width-1)/2+1)*height + (height-1)/2+1] += central/4;
+	float * heatmap = (float*)calloc (size, sizeof(float)); //[width+2][height+2] for padding with zeroes? [width*height] for 1-dimensional? malloc?
+	heatmap[(width/2)    *height + height/2]     += central/4;	//does this work? Is it the right way to do it?
+	heatmap[((width-1)/2)*height + height/2]     += central/4;
+	heatmap[(width/2)    *height + (height-1)/2] += central/4;
+	heatmap[((width-1)/2)*height + (height-1)/2] += central/4;
 
 
 	//Enqueue write buffer = ?
 	//error = clEnqueueWriteBuffer ( command_queue, input_buffer_a, CL_TRUE, 0, ix_m*sizeof(float), a, 0, NULL, NULL);
 	//input_buffer_a = clCreateBuffer ( context, CL_MEM_READ_ONLY, sizeof(float) * ix_m, NULL, &error);
 	
-	error = clEnqueueWriteBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, sizeof(float) * (width+2)*(height+2), heatmap, 0, NULL, NULL );
+	error = clEnqueueWriteBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, sizeof(float) * size, heatmap, 0, NULL, NULL );
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot enqueue write buffer\n" );
 		return 1;
@@ -237,7 +238,7 @@ int main(int argc, char *argv[]){
 	}
 
 	const size_t offset[2] = {1,1};
-	const size_t work_size[2] = {height, width};
+	const size_t work_size[2] = {height-2, width-2};
 
 //ACTUALLY RUN THE PROGRAM!!!!
 	for ( size_t ix=0; ix < iter-1; ix += 2 ) {	
@@ -246,12 +247,12 @@ int main(int argc, char *argv[]){
 //		clFlush ( command_queue );
 //		clFinish ( command_queue );
 	}
-	float * heatmap_out = malloc ( (width+2)*(height+2)*sizeof(float) );
+	float * heatmap_out = malloc ( size*sizeof(float) );
 	if ( iter % 2 == 1 ) {
 		clEnqueueNDRangeKernel ( command_queue, kernel_0, 2, offset, work_size, NULL, 0, NULL, NULL );
-		clEnqueueReadBuffer ( command_queue, heatmap_buffer_1, CL_TRUE, 0, (width+2)*(height+2)*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
+		clEnqueueReadBuffer ( command_queue, heatmap_buffer_1, CL_TRUE, 0, size*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
 	} else {
-		clEnqueueReadBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, (width+2)*(height+2)*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
+		clEnqueueReadBuffer ( command_queue, heatmap_buffer_0, CL_TRUE, 0, size*sizeof(float), heatmap_out, 0, NULL, NULL );//TODO: Error handling, ordering
 	}
 //Done
 
@@ -278,21 +279,25 @@ int main(int argc, char *argv[]){
 
 	float total_heat = 0;
 	float abs_diff_m = 0;
-	for ( size_t ix=1; ix < height+1; ++ix )
-		for ( size_t jx=1; jx < width+1; ++jx )
+	for ( size_t ix=0; ix < height; ++ix ) {
+		for ( size_t jx=0; jx < width; ++jx ) {
 			total_heat += heatmap_out[ix+height*jx];
-	float temp_mean = total_heat / (height*width);
-	for ( size_t ix=1; ix < height+1; ++ix )
-		for ( size_t jx=1; jx < width+1; ++jx ) {
+			printf ("%7d ", (int) heatmap_out[ix+height*jx]);
+		}
+		printf ("\n");
+	}
+	float temp_mean = total_heat / ((height-2)*(width-2));
+	for ( size_t ix=1; ix < height-1; ++ix )
+		for ( size_t jx=1; jx < width-1; ++jx ) {
 			float diff = heatmap_out[ix+height*jx] - temp_mean;
 			if ( diff > 0 )
 				abs_diff_m += diff;
 			else
 				abs_diff_m -= diff;
 		}
-	abs_diff_m /= (width*height);
-	printf("Total temp: %.3e\n", total_heat);
-	printf("Average temp: %.3e\nAverage abs diff: %.3e\n", temp_mean, abs_diff_m);	
+	abs_diff_m /= (width-2)*(height-2);
+	printf("Total temp: %.5e\n", total_heat);
+	printf("Average temp: %.5e\nAverage abs diff: %.5e\n", temp_mean, abs_diff_m);	
 
 
 	free (heatmap);
