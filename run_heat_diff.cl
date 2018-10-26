@@ -3,8 +3,7 @@ run_heat_diff_0(
 	      __global float * heatmap_0,	//float or float, * or **?
 	      __global float * heatmap_1,
 	      __global float * c,
-	      __global int * height,
-	      __global int * width
+	      __global int * height
 	      )
 {
 	int ix = get_global_id(0);	//heightwise
@@ -25,8 +24,7 @@ run_heat_diff_1(
 	      __global float * heatmap_0,	//float or float, * or **?
 	      __global float * heatmap_1,
 	      __global float * c,
-	      __global int * height,
-	      __global int * width
+	      __global int * height
 	      )
 {
 	int ix = get_global_id(0);	//heightwise

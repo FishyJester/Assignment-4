@@ -146,15 +146,10 @@ int main(int argc, char *argv[]){
 		fprintf ( stderr, "Cannot create buffer\n" );
 		return 1;
 	}
-	cl_mem width_buffer = clCreateBuffer ( context, CL_MEM_READ_ONLY, sizeof(int), NULL, &error );
-	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot create buffer\n" );
-		return 1;
-	}
 	
 
 	// Initialize
-	float * heatmap = (float*)calloc (size, sizeof(float)); //[width+2][height+2] for padding with zeroes? [width*height] for 1-dimensional? malloc?
+	float * heatmap = (float*)calloc (size, sizeof(float));
 	heatmap[(width/2)    *height + height/2]     += central/4;	//does this work? Is it the right way to do it?
 	heatmap[((width-1)/2)*height + height/2]     += central/4;
 	heatmap[(width/2)    *height + (height-1)/2] += central/4;
@@ -180,11 +175,6 @@ int main(int argc, char *argv[]){
 		fprintf ( stderr, "Cannot enqueue write buffer\n" );
 		return 1;
 	}
-	error = clEnqueueWriteBuffer ( command_queue, width_buffer, CL_TRUE, 0, sizeof(int), &width, 0, NULL, NULL );
-	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot enqueue write buffer\n" );
-		return 1;
-	}
 	error = clSetKernelArg ( kernel_0, 0, sizeof(cl_mem), &heatmap_buffer_0 );	//TODO: Error handling?
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot set args\n" );
@@ -201,11 +191,6 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 	error = clSetKernelArg ( kernel_0, 3, sizeof(cl_mem), &height_buffer);
-	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set args\n" );
-		return 1;
-	}
-	error = clSetKernelArg ( kernel_0, 4, sizeof(cl_mem), &width_buffer);
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
@@ -227,11 +212,6 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 	error = clSetKernelArg ( kernel_1, 3, sizeof(cl_mem), &height_buffer);
-	if ( error != CL_SUCCESS ) {
-		fprintf ( stderr, "Cannot set args\n" );
-		return 1;
-	}
-	error = clSetKernelArg ( kernel_1, 4, sizeof(cl_mem), &width_buffer);
 	if ( error != CL_SUCCESS ) {
 		fprintf ( stderr, "Cannot set args\n" );
 		return 1;
@@ -273,18 +253,17 @@ int main(int argc, char *argv[]){
 	clReleaseMemObject ( heatmap_buffer_1 );
 	clReleaseMemObject ( c_buffer );
 	clReleaseMemObject ( height_buffer );
-	clReleaseMemObject ( width_buffer );
 	clReleaseCommandQueue ( command_queue );
 	clReleaseContext(context);
 
 	float total_heat = 0;
 	float abs_diff_m = 0;
-	for ( size_t ix=0; ix < height; ++ix ) {
-		for ( size_t jx=0; jx < width; ++jx ) {
+	for ( size_t ix=1; ix < height-1; ++ix ) {
+		for ( size_t jx=1; jx < width-1; ++jx ) {
 			total_heat += heatmap_out[ix+height*jx];
-			printf ("%7d ", (int) heatmap_out[ix+height*jx]);
+//			printf ("%7d ", (int) heatmap_out[ix+height*jx]);
 		}
-		printf ("\n");
+//		printf ("\n");
 	}
 	float temp_mean = total_heat / ((height-2)*(width-2));
 	for ( size_t ix=1; ix < height-1; ++ix )
@@ -296,7 +275,7 @@ int main(int argc, char *argv[]){
 				abs_diff_m -= diff;
 		}
 	abs_diff_m /= (width-2)*(height-2);
-	printf("Total temp: %.5e\n", total_heat);
+//	printf("Total temp: %.5e\n", total_heat);
 	printf("Average temp: %.5e\nAverage abs diff: %.5e\n", temp_mean, abs_diff_m);	
 
 

@@ -86,8 +86,7 @@ run_heat_diff_0(
 	__global float * heatmap_0,
 	__global float * heatmap_1,
 	__global float * c, //Diffusion constant
-	__global int * height,
-	__global int * width
+	__global int * height
 	)
 {
 	int ix = get_global_id(0);
